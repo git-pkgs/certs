@@ -145,9 +145,57 @@ func TestUnsupportedCStringEscapeIsNotInterpretedAsRust(t *testing.T) {
 	}
 }
 
+func TestStaticTemplatePEMBundleInArchive(t *testing.T) {
+	first, second := certificate(t, 1), certificate(t, 2)
+	body := string(pemCertificate(first)) + strings.TrimSpace(string(pemCertificate(second)))
+	source := []byte("\"use strict\";\nconst RedisCloudCA = `" + body + "`;\nexports.default = {ca: RedisCloudCA};\n")
+	result := scan(t, "package.zip", zipArchive(t, member{"package/built/TLSProfiles.js", source}), certs.Options{})
+	if !result.Complete || len(result.Certificates) != 2 || len(result.Collections) != 1 || len(result.Diagnostics) != 0 {
+		t.Fatalf("%+v", result)
+	}
+	collection := result.Collections[0]
+	if collection.Format != "source" || collection.SHA256 != sha(source) || len(collection.Occurrences) != 2 {
+		t.Fatalf("collection: %+v", collection)
+	}
+	plain := scan(t, "bundle.pem", []byte(body), certs.Options{})
+	if collection.SetSHA256 != plain.Collections[0].SetSHA256 {
+		t.Fatal("template changed certificate identities")
+	}
+	for _, occurrence := range collection.Occurrences {
+		if occurrence.EntryType != "js-template-pem" || occurrence.Offset == nil || *occurrence.Offset != int64(bytes.IndexByte(source, '`')) {
+			t.Fatalf("occurrence: %+v", occurrence)
+		}
+	}
+}
+
+func TestUnsupportedTemplatesDoNotLeakPlainPEM(t *testing.T) {
+	good := string(pemCertificate(certificate(t, 1)))
+	for _, body := range []string{good + "${value}", "${value}" + good, good + `\n`, good + `\` + "`", strings.ReplaceAll(good, "\n", `\n`)} {
+		source := []byte("const ca = `" + body + "`;\n" + good)
+		result := scan(t, "source.js", source, certs.Options{})
+		if result.Complete || len(result.Certificates) != 1 || len(result.Collections) != 1 || len(result.Collections[0].Occurrences) != 1 || !hasDiagnostic(result, "unsupported_source") {
+			t.Fatalf("body %q: %+v", body, result)
+		}
+	}
+	result := scan(t, "source.js", []byte("const ca = `"+good), certs.Options{})
+	if result.Complete || len(result.Certificates) != 0 || !hasDiagnostic(result, "unsupported_source") {
+		t.Fatalf("unterminated: %+v", result)
+	}
+}
+
+func TestTemplatePEMAndPlainDuplicateKeepBothOccurrences(t *testing.T) {
+	good := string(pemCertificate(certificate(t, 1)))
+	data := []byte("const other = `unrelated text`;\nconst ca = `" + good + "`;\n" + good)
+	result := scan(t, "source.js", data, certs.Options{})
+	if !result.Complete || len(result.Certificates) != 1 || len(result.Collections) != 1 || len(result.Collections[0].Occurrences) != 2 {
+		t.Fatalf("%+v", result)
+	}
+}
+
 func FuzzSourceCertificates(f *testing.F) {
 	f.Add(sourceFixture(f, "node-roots.h"))
 	f.Add(sourceFixture(f, "rust-roots.rs"))
+	f.Add([]byte("const ca = `" + string(sourceFixture(f, "ec-acc.pem")) + "`;"))
 	f.Add([]byte(`CertificateDer::from_slice(b"\x`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		result, err := certs.Scan(context.Background(), "input", bytes.NewReader(data), certs.Options{MaxFileBytes: 1 << 20, MaxCertificates: 100, MaxDiagnostics: 10})

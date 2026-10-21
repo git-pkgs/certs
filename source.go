@@ -11,14 +11,22 @@ const (
 	rustCertificate = "CertificateDer::from_slice"
 	quotedPEM       = "\"-----BEGIN CERTIFICATE-----"
 	codeSource      = "unsupported_source"
+	formatSource    = "source"
+	templatePEM     = "js-template-pem"
 	decimalDigits   = 10
 	hexByteDigits   = 2
 )
 
-func (s *scanner) sourceCertificates(data []byte, collection *Collection) {
-	if !bytes.Contains(data, []byte(rustCertificate)) && !bytes.Contains(data, []byte(quotedPEM)) {
-		return
+type sourceSpan struct {
+	start, end int
+}
+
+func (s *scanner) sourceCertificates(data []byte, collection *Collection) []sourceSpan {
+	templateCandidate := bytes.ContainsRune(data, '`') && bytes.Contains(data, []byte("-----BEGIN CERTIFICATE-----"))
+	if !bytes.Contains(data, []byte(rustCertificate)) && !bytes.Contains(data, []byte(quotedPEM)) && !templateCandidate {
+		return nil
 	}
+	var templates []sourceSpan
 	for pos := 0; pos < len(data); {
 		pos = sourceSpace(data, pos)
 		if pos == len(data) {
@@ -30,6 +38,17 @@ func (s *scanner) sourceCertificates(data []byte, collection *Collection) {
 			pos, more = s.rustSource(data, pos, collection)
 		case quotedPEMStart(data[pos:]) && (pos == 0 || !sourceIdentifier(data[pos-1])):
 			pos, more = s.quotedSource(data, pos, collection)
+		case bytes.HasPrefix(data[pos:], []byte("``")):
+			for pos < len(data) && data[pos] == '`' {
+				pos++
+			}
+			more = true
+		case data[pos] == '`':
+			start := pos
+			pos, more = s.templateSource(data, pos, collection)
+			if bytes.Contains(data[start:pos], []byte("-----BEGIN CERTIFICATE-----")) {
+				templates = append(templates, sourceSpan{start, pos})
+			}
 		case data[pos] == '"':
 			_, pos, _ = sourceString(data, pos, false, false)
 			more = true
@@ -38,9 +57,44 @@ func (s *scanner) sourceCertificates(data []byte, collection *Collection) {
 			more = true
 		}
 		if !more {
-			return
+			return templates
 		}
 	}
+	return templates
+}
+
+func (s *scanner) templateSource(data []byte, start int, collection *Collection) (int, bool) {
+	end := start + 1
+	for end < len(data) && data[end] != '`' {
+		if data[end] == '\\' {
+			end++
+		}
+		end++
+	}
+	end = min(end, len(data))
+	body := data[start+1 : end]
+	closed := end < len(data)
+	if closed {
+		end++
+	}
+	if !templateCertificatePEM(body) {
+		return end, true
+	}
+	collection.Format = formatSource
+	if !closed || bytes.ContainsRune(body, '\\') || bytes.Contains(body, []byte("${")) {
+		s.problem(collection, codeSource, fmt.Sprintf("template certificate at offset %d: escapes, interpolation or missing closing backtick", start))
+		return end, true
+	}
+	return end, s.sourcePEM(body, start, collection, templatePEM)
+}
+
+func templateCertificatePEM(body []byte) bool {
+	for _, newline := range []string{"\n", "\r\n", `\n`, `\r\n`} {
+		if bytes.Contains(body, []byte("-----BEGIN CERTIFICATE-----"+newline)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *scanner) rustSource(data []byte, start int, collection *Collection) (int, bool) {
@@ -52,7 +106,7 @@ func (s *scanner) rustSource(data []byte, start int, collection *Collection) (in
 	if !bytes.HasPrefix(data[pos:], []byte("b\"")) {
 		return pos, true
 	}
-	collection.Format = "source"
+	collection.Format = formatSource
 	der, end, err := sourceString(data, pos+1, true, true)
 	if err != nil {
 		s.problem(collection, codeSource, fmt.Sprintf("Rust certificate at offset %d: %v", start, err))
@@ -68,7 +122,7 @@ func (s *scanner) rustSource(data []byte, start int, collection *Collection) (in
 }
 
 func (s *scanner) quotedSource(data []byte, start int, collection *Collection) (int, bool) {
-	collection.Format = "source"
+	collection.Format = formatSource
 	pos := start
 	var decoded []byte
 	for pos < len(data) && data[pos] == '"' {
@@ -80,10 +134,10 @@ func (s *scanner) quotedSource(data []byte, start int, collection *Collection) (
 		decoded = append(decoded, part...)
 		pos = sourceSpace(data, end)
 	}
-	return pos, s.sourcePEM(decoded, start, collection)
+	return pos, s.sourcePEM(decoded, start, collection, "c-string-pem")
 }
 
-func (s *scanner) sourcePEM(decoded []byte, start int, collection *Collection) bool {
+func (s *scanner) sourcePEM(decoded []byte, start int, collection *Collection, entryType string) bool {
 	const begin = "-----BEGIN CERTIFICATE-----"
 	for len(bytes.TrimSpace(decoded)) > 0 {
 		decoded = bytes.TrimSpace(decoded)
@@ -98,7 +152,7 @@ func (s *scanner) sourcePEM(decoded []byte, start int, collection *Collection) b
 			s.problem(collection, codeMalformed, fmt.Sprintf("invalid quoted PEM certificate at offset %d", start))
 		} else {
 			offset := int64(start)
-			if !s.addCertificate(block.Bytes, collection, Occurrence{Offset: &offset, EntryType: "c-string-pem"}) {
+			if !s.addCertificate(block.Bytes, collection, Occurrence{Offset: &offset, EntryType: entryType}) {
 				return false
 			}
 		}

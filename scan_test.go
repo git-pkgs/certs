@@ -387,6 +387,8 @@ func TestChunkBoundaries(t *testing.T) {
 func FuzzScan(f *testing.F) {
 	der := certificate(f, 1)
 	f.Add(der)
+	legacy, _ := pem.Decode(sourceFixture(f, "ec-acc.pem"))
+	f.Add(legacy.Bytes)
 	f.Add(pemCertificate(der))
 	f.Add(zipArchive(f, member{"root", der}))
 	f.Add([]byte{0xfe, 0xed, 0xfe, 0xed, 0, 0, 0, 2})

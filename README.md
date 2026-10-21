@@ -137,6 +137,9 @@ Encrypted PKCS#12 contents are detected but not decrypted. Readable bags in the
 same store are still inventoried. JCEKS, unsupported PEM containers such as
 PKCS#7, and OpenSSL auxiliary trust attributes produce coverage diagnostics.
 Malformed certificates do not discard later PEM blocks or recovered identities.
+Legacy negative serial numbers are retained for inventory without changing Go's
+process-wide parsing settings. Certificate and SPKI hashes use the original
+bytes; accepting these serials does not establish certificate validity.
 PEM blocks outside the supported certificate labels and known certificate
 containers are skipped. CRLs are skipped in both PEM and DER encodings. Explicit
 ellipsis placeholders in documentation are ignored; actual certificates in
@@ -150,6 +153,11 @@ the encoding as `c-string-pem` or `rust-byte-der`. Offsets point to the opening
 quote of a PEM string group or the Rust constructor in the original file. File
 hashes cover the original source bytes, while certificate and SPKI hashes cover
 the decoded DER. Comments are skipped and source code is never executed.
+
+Static multiline JavaScript template literals containing PEM bundles are also
+supported, with occurrence type `js-template-pem` and offsets at the opening
+backtick. Escapes and interpolation in certificate templates produce coverage
+diagnostics; their contents are not treated as ordinary PEM files.
 
 This supports the literal syntax in Node's generated root header and
 `webpki-root-certs`. Arbitrary expressions, includes, macros and other source

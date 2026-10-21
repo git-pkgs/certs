@@ -93,6 +93,54 @@ func TestCLIArchiveInventory(t *testing.T) {
 	}
 }
 
+func TestCLILegacyAndTemplateCertificates(t *testing.T) {
+	t.Setenv("GODEBUG", "x509negativeserial=0")
+	encoded, err := os.ReadFile(filepath.Join("..", "..", "testdata", "ec-acc.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var archive bytes.Buffer
+	w := zip.NewWriter(&archive)
+	for name, data := range map[string][]byte{
+		"cacerts.pem":    encoded,
+		"TLSProfiles.js": []byte("const ca = `" + strings.TrimSpace(string(encoded)) + "`;\n"),
+	} {
+		entry, createErr := w.Create(name)
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, writeErr := entry.Write(data); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "package.zip")
+	if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	var result certs.Inventory
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Complete || len(result.Certificates) != 1 || len(result.Collections) != 2 || len(result.Diagnostics) != 0 {
+		t.Fatalf("%+v", result)
+	}
+	if result.Certificates[0].SHA256 != "88497f01602f3154246ae28c4d5aef10f1d87ebb76626f4ae0b7f95ba7968799" || !strings.HasPrefix(result.Certificates[0].Serial, "-") {
+		t.Fatalf("identity: %+v", result.Certificates[0])
+	}
+	for _, collection := range result.Collections {
+		if len(collection.Occurrences) != 1 {
+			t.Fatalf("occurrences: %+v", collection)
+		}
+	}
+}
+
 func TestCLISourceCertificatesInArchive(t *testing.T) {
 	var archive bytes.Buffer
 	w := zip.NewWriter(&archive)

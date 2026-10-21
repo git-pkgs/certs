@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"slices"
+	"sort"
 
 	"github.com/git-pkgs/magic"
 )
@@ -48,10 +49,10 @@ func (s *scanner) parse(data []byte, location []Member, detection magic.Result) 
 			s.problem(&collection, "unrecognized_binary", "binary content outside supported certificate formats was not inventoried")
 			return
 		}
+		templates := s.sourceCertificates(data, &collection)
 		if bytes.Contains(data, []byte("-----BEGIN ")) {
-			s.pem(data, &collection)
+			s.pem(data, &collection, templates)
 		}
-		s.sourceCertificates(data, &collection)
 		if len(collection.Occurrences) == 0 {
 			return
 		}
@@ -64,7 +65,7 @@ func (s *scanner) parse(data []byte, location []Member, detection magic.Result) 
 	s.result.Collections = append(s.result.Collections, collection)
 }
 
-func (s *scanner) pem(data []byte, collection *Collection) {
+func (s *scanner) pem(data []byte, collection *Collection, templates []sourceSpan) {
 	const begin = "-----BEGIN "
 	for pos := 0; pos < len(data); {
 		rel := bytes.Index(data[pos:], []byte(begin))
@@ -72,6 +73,11 @@ func (s *scanner) pem(data []byte, collection *Collection) {
 			break
 		}
 		start := pos + rel
+		template := sort.Search(len(templates), func(i int) bool { return templates[i].end > start })
+		if template < len(templates) && templates[template].start <= start {
+			pos = templates[template].end
+			continue
+		}
 		if !pemLineStart(data, start) {
 			pos = start + len(begin)
 			continue
@@ -210,7 +216,7 @@ func (s *scanner) addCertificate(data []byte, collection *Collection, occurrence
 	}
 	sha := digest(data)
 	if !s.identities[sha] {
-		certificate, err := x509.ParseCertificate(data)
+		certificate, err := inventoryCertificate(data)
 		if err != nil {
 			if collection.Format == formatDER {
 				if _, crlErr := x509.ParseRevocationList(data); crlErr == nil {
