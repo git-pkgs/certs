@@ -143,10 +143,25 @@ ellipsis placeholders in documentation are ignored; actual certificates in
 documentation are inventoried. PEM headers must start a line apart from whitespace;
 headers prefixed with source-comment markers are skipped.
 
+Generated source lists are supported for Node-style adjacent quoted PEM strings
+and Rust `CertificateDer::from_slice(b"...")` byte literals, including renamed
+files and archive members. Collections use format `source`; occurrences identify
+the encoding as `c-string-pem` or `rust-byte-der`. Offsets point to the opening
+quote of a PEM string group or the Rust constructor in the original file. File
+hashes cover the original source bytes, while certificate and SPKI hashes cover
+the decoded DER. Comments are skipped and source code is never executed.
+
+This supports the literal syntax in Node's generated root header and
+`webpki-root-certs`. Arbitrary expressions, includes, macros and other source
+encodings are not evaluated. Recognized certificate literals with invalid or
+unsupported syntax produce diagnostics. Preprocessor conditions are not evaluated;
+presence does not establish that a certificate is included in a particular build.
+
 `magic` identifies PNG, JPEG, GIF, PDF and Java class files so they can be skipped before
 certificate buffering. Embedded material in those formats is outside this scan.
 Native binaries, WebAssembly and static libraries are skipped with diagnostics;
-compiled trust anchors and encoded source literals are not decoded. Unrecognized
+compiled trust anchors, stripped `webpki-roots` anchors and other encoded source
+literals are not decoded. Unrecognized
 binary or ASN.1 content, archive links, unsupported stores and limits also make
 `complete` false. This field describes parser coverage, not runtime trust or the
 absence of every possible certificate representation.

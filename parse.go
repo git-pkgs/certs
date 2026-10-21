@@ -51,6 +51,7 @@ func (s *scanner) parse(data []byte, location []Member, detection magic.Result) 
 		if bytes.Contains(data, []byte("-----BEGIN ")) {
 			s.pem(data, &collection)
 		}
+		s.sourceCertificates(data, &collection)
 		if len(collection.Occurrences) == 0 {
 			return
 		}

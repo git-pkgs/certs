@@ -93,6 +93,47 @@ func TestCLIArchiveInventory(t *testing.T) {
 	}
 }
 
+func TestCLISourceCertificatesInArchive(t *testing.T) {
+	var archive bytes.Buffer
+	w := zip.NewWriter(&archive)
+	for _, name := range []string{"node-roots.h", "rust-roots.rs"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry, err := w.Create("vendor/" + name + ".renamed")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "source.zip")
+	if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	var result certs.Inventory
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Complete || len(result.Certificates) != 2 || len(result.Collections) != 2 {
+		t.Fatalf("%+v", result)
+	}
+	for _, collection := range result.Collections {
+		if collection.Format != "source" || len(collection.Location) != 2 || len(collection.Occurrences) != 1 || collection.Occurrences[0].Offset == nil {
+			t.Fatalf("%+v", collection)
+		}
+	}
+}
+
 func TestCLIIncompleteAndErrors(t *testing.T) {
 	path := cliFixture(t)
 	for _, test := range []struct {
