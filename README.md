@@ -7,7 +7,13 @@ run offline without CGo or native libraries.
 
 ## Installation
 
-Build and install the CLI from this checkout:
+Install the CLI with Go:
+
+```bash
+go install github.com/git-pkgs/certs/cmd/certs@latest
+```
+
+Or build and install from this checkout:
 
 ```bash
 CGO_ENABLED=0 go install ./cmd/certs
